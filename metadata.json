@@ -1,0 +1,7 @@
+{
+  "name": "Pet AI Sanctuary",
+  "description": "A peaceful digital pet companion designed to reduce stress, loneliness, and burnout through gentle interaction and a calming environment.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
