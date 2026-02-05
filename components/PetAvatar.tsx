@@ -5,11 +5,11 @@ import { PetStatus, PetType } from '../types';
 interface PetAvatarProps {
   status: PetStatus;
   type: PetType;
-  onClick: () => void;
+  onPet: (location: 'ears' | 'chin' | 'back' | 'head') => void;
   externalPointer?: { x: number; y: number } | null;
 }
 
-export const PetAvatar: React.FC<PetAvatarProps> = ({ status, type, onClick, externalPointer }) => {
+export const PetAvatar: React.FC<PetAvatarProps> = ({ status, type, onPet, externalPointer }) => {
   const [pettingIntensity, setPettingIntensity] = useState(0);
   const [irisOffset, setIrisOffset] = useState({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
@@ -45,16 +45,20 @@ export const PetAvatar: React.FC<PetAvatarProps> = ({ status, type, onClick, ext
     const animate = (time: number) => {
       const deltaTime = (time - lastTimeRef.current) / 1000;
       lastTimeRef.current = time;
-      setPettingIntensity(prev => Math.max(0, prev - deltaTime * 0.4));
-
-      const isActive = (status === PetStatus.HAPPY || status === PetStatus.EATING || status === PetStatus.DRINKING);
       
-      const baseSpeed = isActive ? 10 : 3;
-      const speedMult = 1 + pettingIntensity * 3;
-      const amplitude = status === PetStatus.HAPPY ? 45 : (15 + pettingIntensity * 50);
+      if (status === PetStatus.PETTING) {
+        setPettingIntensity(prev => Math.min(1, prev + deltaTime * 2));
+      } else {
+        setPettingIntensity(prev => Math.max(0, prev - deltaTime * 0.4));
+      }
+
+      const isActive = (status === PetStatus.HAPPY || status === PetStatus.EATING || status === PetStatus.DRINKING || status === PetStatus.PETTING);
+      
+      const baseSpeed = isActive ? 12 : 3;
+      const speedMult = 1 + pettingIntensity * 2;
+      const amplitude = status === PetStatus.HAPPY || status === PetStatus.PETTING ? 45 : (15 + pettingIntensity * 20);
       setWagAngle(Math.sin(time * 0.005 * baseSpeed * speedMult) * amplitude);
       
-      // Ears bounce slightly in opposite phase or just standard wiggle
       setEarBounce(Math.sin(time * 0.008 * (isActive ? 2 : 1)) * (isActive ? 8 : 2));
 
       if (status === PetStatus.DRINKING || status === PetStatus.EATING) {
@@ -76,7 +80,7 @@ export const PetAvatar: React.FC<PetAvatarProps> = ({ status, type, onClick, ext
     };
     requestRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(requestRef.current!);
-  }, [status, type, actionFrame, pettingIntensity]);
+  }, [status, pettingIntensity]);
 
   let headY = 0, jawGap = 0, noseJitter = 0, eyeSquint = 1;
   if (status === PetStatus.EATING || status === PetStatus.DRINKING) {
@@ -84,15 +88,17 @@ export const PetAvatar: React.FC<PetAvatarProps> = ({ status, type, onClick, ext
     if (cycle < 15) { headY = (cycle/15) * 10; eyeSquint = 0.8; }
     else if (cycle < 30) { headY = 10; jawGap = ((cycle-15)/15) * 8; eyeSquint = 0.3; }
     else { headY = (1 - (cycle-30)/15) * 10; eyeSquint = 0.9; }
+  } else if (status === PetStatus.PETTING) {
+    eyeSquint = 0.4;
+    headY = Math.sin(performance.now() * 0.005) * 3;
   }
   
   noseJitter = Math.sin(performance.now() * 0.012) * 1.5;
 
   const isDog = type === PetType.DOG;
-  const isCat = type === PetType.CAT;
 
   return (
-    <div ref={containerRef} className="relative cursor-pointer transition-all transform touch-none select-none flex items-center justify-center" onClick={onClick}>
+    <div ref={containerRef} className="relative cursor-pointer transition-all transform touch-none select-none flex items-center justify-center">
       <div className="absolute inset-0 pointer-events-none z-50">
         {droplets.map(d => <div key={d.id} className="absolute w-2 h-2 bg-blue-300/60 rounded-full blur-[1px]" style={{ left: `${d.x}px`, top: `${d.y}px`, opacity: d.life }} />)}
         {crumbs.map(c => <div key={c.id} className="absolute w-2 h-2 bg-amber-900/60 rounded-sm" style={{ left: `${c.x}px`, top: `${c.y}px`, opacity: c.life, transform: `rotate(${c.rot}deg)` }} />)}
@@ -112,7 +118,7 @@ export const PetAvatar: React.FC<PetAvatarProps> = ({ status, type, onClick, ext
 
         <g style={{ transform: `scale(${1 + pettingIntensity * 0.05})`, transformOrigin: 'center 160px' }}>
           
-          {/* Tail Layer (behind body) */}
+          {/* Tail Layer */}
           <g style={{ transform: `rotate(${wagAngle}deg)`, transformOrigin: isDog ? '130px 145px' : '125px 145px' }}>
              {isDog ? (
                <g>
@@ -127,31 +133,32 @@ export const PetAvatar: React.FC<PetAvatarProps> = ({ status, type, onClick, ext
           {/* Main Pet Body and Head Group */}
           <g style={{ transform: `translate(0, ${headY}px)` }}>
             
+            {/* Hitbox: Back */}
+            <circle cx="100" cy="120" r="75" fill="transparent" onClick={(e) => { e.stopPropagation(); onPet('back'); }} />
+
             {/* Ears Layer */}
             {isDog ? (
               <g>
-                {/* Left Ear - Upright/Upside like cat */}
-                <g style={{ transform: `rotate(${-earBounce * 0.8}deg)`, transformOrigin: '45px 85px' }}>
+                <g style={{ transform: `rotate(${-earBounce * 0.8}deg)`, transformOrigin: '45px 85px' }} onClick={(e) => { e.stopPropagation(); onPet('ears'); }}>
                   <path d="M45,85 L30,35 Q55,25 80,75 Z" fill="#C68B59" />
                   <path d="M50,80 L42,50 Q52,42 70,72 Z" fill="#A0522D" opacity="0.2" />
                 </g>
-                {/* Right Ear - Upright/Upside like cat */}
-                <g style={{ transform: `rotate(${earBounce * 0.8}deg)`, transformOrigin: '155px 85px' }}>
+                <g style={{ transform: `rotate(${earBounce * 0.8}deg)`, transformOrigin: '155px 85px' }} onClick={(e) => { e.stopPropagation(); onPet('ears'); }}>
                   <path d="M155,85 L170,35 Q145,25 120,75 Z" fill="#C68B59" />
                   <path d="M150,80 L158,50 Q148,42 130,72 Z" fill="#A0522D" opacity="0.2" />
                 </g>
               </g>
             ) : (
               <g>
-                <path d="M45,85 L25,40 L85,75 Z" fill="#94A3B8" style={{ transform: `rotate(${-earBounce * 0.5}deg)`, transformOrigin: '45px 85px' }} /> {/* Left Pointy */}
-                <path d="M155,85 L175,40 L115,75 Z" fill="#94A3B8" style={{ transform: `rotate(${earBounce * 0.5}deg)`, transformOrigin: '155px 85px' }} /> {/* Right Pointy */}
+                <path d="M45,85 L25,40 L85,75 Z" fill="#94A3B8" style={{ transform: `rotate(${-earBounce * 0.5}deg)`, transformOrigin: '45px 85px' }} onClick={(e) => { e.stopPropagation(); onPet('ears'); }} />
+                <path d="M155,85 L175,40 L115,75 Z" fill="#94A3B8" style={{ transform: `rotate(${earBounce * 0.5}deg)`, transformOrigin: '155px 85px' }} onClick={(e) => { e.stopPropagation(); onPet('ears'); }} />
                 <path d="M45,85 L35,55 L75,75 Z" fill="#64748B" opacity="0.3" style={{ transform: `rotate(${-earBounce * 0.5}deg)`, transformOrigin: '45px 85px' }} />
                 <path d="M155,85 L165,55 L125,75 Z" fill="#64748B" opacity="0.3" style={{ transform: `rotate(${earBounce * 0.5}deg)`, transformOrigin: '155px 85px' }} />
               </g>
             )}
 
             {/* Torso/Head Body */}
-            <circle cx="100" cy="120" r="75" fill={isDog ? "#F5D6B8" : "#CBD5E1"} />
+            <circle cx="100" cy="120" r="75" fill={isDog ? "#F5D6B8" : "#CBD5E1"} onClick={() => onPet('head')} />
             
             {/* Soft Belly/Muzzle Area */}
             <ellipse cx="100" cy="138" rx="28" ry="20" fill={isDog ? "#FAE8D0" : "#F1F5F9"} opacity="0.6" />
@@ -162,22 +169,14 @@ export const PetAvatar: React.FC<PetAvatarProps> = ({ status, type, onClick, ext
               <circle cx="132" cy="105" r="11" fill="#0F172A" />
               <circle cx="65" cy="100" r="4" fill="white" style={{ transform: `translate(${irisOffset.x * 0.4}px, ${irisOffset.y * 0.4}px)` }} />
               <circle cx="129" cy="100" r="4" fill="white" style={{ transform: `translate(${irisOffset.x * 0.4}px, ${irisOffset.y * 0.4}px)` }} />
-              <circle cx="72" cy="110" r="1.5" fill="white" opacity="0.4" />
-              <circle cx="136" cy="110" r="1.5" fill="white" opacity="0.4" />
             </g>
 
             {/* Nose & Mouth area */}
             <g style={{ transform: `translate(0, ${noseJitter}px)` }}>
               <ellipse cx="100" cy="132" rx="8" ry="5.5" fill="#0F172A" />
+              {/* Hitbox: Chin */}
+              <circle cx="100" cy="148" r="15" fill="transparent" onClick={(e) => { e.stopPropagation(); onPet('chin'); }} />
               <path d="M90,145 Q100,152 110,145" fill="none" stroke="#0F172A" strokeWidth="3" strokeLinecap="round" />
-              {isCat && (
-                <g opacity="0.4">
-                  <path d="M70,135 L40,130" stroke="#0F172A" strokeWidth="1" />
-                  <path d="M70,140 L40,145" stroke="#0F172A" strokeWidth="1" />
-                  <path d="M130,135 L160,130" stroke="#0F172A" strokeWidth="1" />
-                  <path d="M130,140 L160,145" stroke="#0F172A" strokeWidth="1" />
-                </g>
-              )}
             </g>
 
             {/* Mouth Gap for Eating/Drinking */}

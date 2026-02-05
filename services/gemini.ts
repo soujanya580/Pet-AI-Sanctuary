@@ -1,18 +1,15 @@
 
-import { GoogleGenAI, Chat } from "@google/genai";
+import { GoogleGenAI, Modality } from "@google/genai";
 import { PetType } from "../types.ts";
 
 export class GeminiService {
-  private chat: Chat | null = null;
+  private chat: any = null;
   private currentPetType: PetType | null = null;
-
-  private getAI() {
-    return new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-  }
+  private ttsCache: Map<string, string> = new Map();
 
   private initChat(petType: PetType) {
     try {
-      const ai = this.getAI();
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const name = petType === PetType.DOG ? "Buddy" : "Luna";
 
       this.chat = ai.chats.create({
@@ -39,35 +36,62 @@ BEHAVIOR RULES:
       });
       this.currentPetType = petType;
     } catch (e) {
+      console.error("Gemini initialization failed:", e);
       this.chat = null;
     }
   }
 
   async sendMessage(text: string, petType: PetType): Promise<string> {
     try {
-      if (!this.chat || this.currentPetType !== petType) this.initChat(petType);
+      if (!this.chat || this.currentPetType !== petType) {
+        this.initChat(petType);
+      }
       if (this.chat) {
         const resp = await this.chat.sendMessage({ message: text });
         return resp.text || "";
       }
-    } catch (e) {}
-    return `[VOICE]: "I'm here!"\n[VISUAL]: Wags tail\n[TEXT]: 🐾 I'm listening!`;
+    } catch (e) {
+      console.error("Gemini sendMessage failed:", e);
+    }
+    return `[VOICE]: "I'm here!"\n[VISUAL]: Wags tail\n[TEXT]: 🐾 I'm listening! I had a little trouble connecting, but I'm back now.`;
   }
 
   async generateSpeech(text: string, petType: PetType): Promise<string | null> {
+    const cacheKey = `${petType}:${text}`;
+    if (this.ttsCache.has(cacheKey)) {
+      return this.ttsCache.get(cacheKey)!;
+    }
+
     try {
-      const ai = this.getAI();
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const voiceName = petType === PetType.DOG ? 'Kore' : 'Puck';
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash-preview-tts",
         contents: [{ parts: [{ text }] }],
         config: {
-          responseModalities: ["AUDIO"],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName },
+            },
+          },
         },
       });
-      return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
-    } catch (e) { return null; }
+      
+      const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
+      if (audioData) {
+        this.ttsCache.set(cacheKey, audioData);
+      }
+      return audioData;
+    } catch (e: any) {
+      // Log specifically if it's a quota issue
+      if (e.message?.includes('429') || e.status === 429) {
+        console.warn("Gemini TTS Quota Exceeded (429). Falling back to Web Speech API.");
+      } else {
+        console.error("Gemini TTS failed:", e);
+      }
+      return null;
+    }
   }
 }
 

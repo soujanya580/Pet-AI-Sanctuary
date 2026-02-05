@@ -13,24 +13,16 @@ export interface ActionResponse {
 
 const FEEDING_RESPONSES = [
   "Mmm, delicious! Thank you!",
-  "This is perfect. Thanks.",
   "Yummy! Good caretaker.",
-  "My favorite flavor!",
   "I feel energized now!",
-  "So tasty, thank you.",
-  "Mmm, hits the spot.",
   "Thank you for dinner.",
-  "That was yummy!",
-  "Best meal ever!"
+  "That was yummy!"
 ];
 
 const DRINKING_RESPONSES = [
   "Ahh, refreshing water!",
   "Just what I needed.",
-  "So cool and clean.",
-  "This hits the spot.",
   "I was getting thirsty.",
-  "Refreshing! Thank you.",
   "Cool water is best.",
   "Ahh, thank you!"
 ];
@@ -43,27 +35,15 @@ export class ActionProcessor {
     play: 0
   };
 
-  private actionCount = 0;
-
   private COOLDOWNS = {
     feed: 60000, 
     water: 30000,  
-    pet: 5000,
+    pet: 1000,
     play: 20000
   };
 
   private getPetName(type: PetType): string {
-    switch (type) {
-      case PetType.DOG: return "Buddy";
-      case PetType.CAT: return "Luna";
-      default: return "Pet";
-    }
-  }
-
-  private shouldVoice(): boolean {
-    // Increased frequency: Pet voices almost every action now
-    this.actionCount++;
-    return true; 
+    return type === PetType.DOG ? "Buddy" : "Luna";
   }
 
   private getRandomResponse(list: string[]): string {
@@ -74,7 +54,8 @@ export class ActionProcessor {
     input: string,
     source: InteractionSource,
     petType: PetType,
-    stats: PetStats
+    stats: PetStats,
+    location?: string
   ): Promise<ActionResponse | null> {
     const text = input.toLowerCase();
     const name = this.getPetName(petType);
@@ -82,44 +63,64 @@ export class ActionProcessor {
 
     const isFeeding = /feed|food|meal|dinner|kibble|eat/i.test(text);
     const isWatering = /water|drink|thirsty|hydration|serve water/i.test(text);
-    const isPetting = /pet|stroke|pat|cuddle/i.test(text);
+    const isPetting = /pet|stroke|pat|cuddle/i.test(text) || !!location;
     const isPlaying = /play|fetch|toy|game/i.test(text);
 
     if (isFeeding) {
       if (now - this.lastActionTime.feed < this.COOLDOWNS.feed) {
         return {
           animation: PetStatus.IDLE,
-          chatMessage: `🦴 ${name} is still full. Try playing instead?`,
-          voiceText: "I'm still quite full, thank you.",
+          chatMessage: `🦴 ${name} is still full.`,
+          voiceText: "I'm still full, thank you.",
           statUpdate: {},
-          duration: 3000
+          duration: 2000
         };
       }
       this.lastActionTime.feed = now;
-      return this.getFeedingAction(source, name, petType);
+      return this.getFeedingAction(source, name);
     }
 
     if (isWatering) {
       if (now - this.lastActionTime.water < this.COOLDOWNS.water) {
         return {
           animation: PetStatus.IDLE,
-          chatMessage: `💧 ${name} isn't thirsty yet. Maybe pet her?`,
+          chatMessage: `💧 ${name} isn't thirsty yet.`,
           voiceText: "I'm not thirsty just yet.",
           statUpdate: {},
-          duration: 3000
+          duration: 2000
         };
       }
       this.lastActionTime.water = now;
-      return this.getWateringAction(source, name, petType);
+      return this.getWateringAction(source, name);
     }
 
     if (isPetting) {
+      const petLocation = location || 'head';
+      let voiceText = "";
+      let happinessGain = 10;
+
+      if (petType === PetType.DOG) {
+        switch(petLocation) {
+          case 'ears': voiceText = "Oh, right behind the ears! *wag*"; happinessGain = 15; break;
+          case 'chin': voiceText = "Aww, scritches under the chin! *happy pant*"; happinessGain = 12; break;
+          case 'back': voiceText = "Long pets are the best! *tail thumps*"; break;
+          default: voiceText = "You're my best friend! *lick*";
+        }
+      } else {
+        switch(petLocation) {
+          case 'ears': voiceText = "Purrr... exactly there."; happinessGain = 15; break;
+          case 'chin': voiceText = "The chin is my favorite spot... *purrr*"; happinessGain = 20; break;
+          case 'back': voiceText = "I love being pampered."; break;
+          default: voiceText = "I'm so lucky to have you.";
+        }
+      }
+
       return {
         animation: PetStatus.PETTING,
-        chatMessage: `❤️ You petted ${name}.`,
-        voiceText: petType === PetType.CAT ? "Purrrr... I love this." : "You're my best friend.",
-        statUpdate: { happiness: 10 },
-        duration: 5000
+        chatMessage: `❤️ You petted ${name}'s ${petLocation}.`,
+        voiceText,
+        statUpdate: { happiness: happinessGain },
+        duration: 3000
       };
     }
 
@@ -136,27 +137,23 @@ export class ActionProcessor {
     return null;
   }
 
-  private getFeedingAction(source: InteractionSource, name: string, type: PetType): ActionResponse {
-    const duration = 10000;
-    const voice = this.getRandomResponse(FEEDING_RESPONSES);
+  private getFeedingAction(source: InteractionSource, name: string): ActionResponse {
     return {
       animation: PetStatus.EATING,
       statUpdate: { hunger: 25, happiness: 15 },
-      duration,
-      chatMessage: source === 'ui' ? `You fed ${name}.` : `🦴 Preparing ${name}'s meal...`,
-      voiceText: voice
+      duration: 10000,
+      chatMessage: `🦴 Feeding ${name}...`,
+      voiceText: this.getRandomResponse(FEEDING_RESPONSES)
     };
   }
 
-  private getWateringAction(source: InteractionSource, name: string, type: PetType): ActionResponse {
-    const duration = 8000;
-    const voice = this.getRandomResponse(DRINKING_RESPONSES);
+  private getWateringAction(source: InteractionSource, name: string): ActionResponse {
     return {
       animation: PetStatus.DRINKING,
       statUpdate: { thirst: 40, happiness: 5 },
-      duration,
+      duration: 8000,
       chatMessage: `${name} drinks gratefully.`,
-      voiceText: voice
+      voiceText: this.getRandomResponse(DRINKING_RESPONSES)
     };
   }
 }

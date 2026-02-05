@@ -5,7 +5,7 @@ import { ChatWindow } from './components/ChatWindow.tsx';
 import { Message, PetStatus, PetType, PetStats, Mood, MoodEntry } from './types.ts';
 import { lumiService } from './services/gemini.ts';
 import { actionProcessor, InteractionSource } from './services/ActionProcessor.ts';
-import { Footprints, Moon, Droplets, Utensils, Gamepad2, Heart, Zap } from 'lucide-react';
+import { Footprints, Moon, Droplets, Utensils, Gamepad2, Heart } from 'lucide-react';
 
 function decode(base64: string) {
   const b = atob(base64);
@@ -38,38 +38,67 @@ const App: React.FC = () => {
   });
   const [showMoodPicker, setShowMoodPicker] = useState(false);
   const [isNight, setIsNight] = useState(false);
-
-  // Simulation State
   const [simulationStep, setSimulationStep] = useState(0);
   const [simulationType, setSimulationType] = useState<'feed' | 'water' | 'none'>('none');
 
   const audioContextRef = useRef<AudioContext | null>(null);
+  const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
   useEffect(() => {
     const hour = new Date().getHours();
-    setIsNight(hour >= 21 || hour < 6);
-    if (hour >= 21 || hour < 6) setStatus(PetStatus.SLEEPING);
+    const night = hour >= 21 || hour < 6;
+    setIsNight(night);
+    if (night) setStatus(PetStatus.SLEEPING);
   }, []);
 
   const speak = async (fullText: string) => {
+    // Stop previous voice to prevent echoing
+    if (currentSourceRef.current) {
+      try {
+        currentSourceRef.current.stop();
+      } catch (e) {}
+      currentSourceRef.current = null;
+    }
+    // Also cancel any ongoing Web Speech synthesis
+    window.speechSynthesis.cancel();
+
     const voiceMatch = fullText.match(/\[VOICE\]:\s*"([^"]*)"/i);
-    const voiceText = voiceMatch ? voiceMatch[1].trim() : "";
+    const voiceText = voiceMatch ? voiceMatch[1].trim() : fullText.split('\n')[0].replace(/\[VOICE\]:\s*/i, "").replace(/"/g, "");
+    
     if (!voiceText || voiceText === '""') return;
 
+    let geminiAudioData = null;
     try {
-      const audioData = await lumiService.generateSpeech(voiceText, petType);
-      if (audioData) {
+      geminiAudioData = await lumiService.generateSpeech(voiceText, petType);
+    } catch (e) {
+      console.warn("Gemini TTS failed, falling back to Web Speech.");
+    }
+
+    if (geminiAudioData) {
+      try {
         if (!audioContextRef.current) audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const buf = await decodeAudioData(decode(audioData), audioContextRef.current, 24000, 1);
+        const buf = await decodeAudioData(decode(geminiAudioData), audioContextRef.current, 24000, 1);
         const s = audioContextRef.current.createBufferSource();
         s.buffer = buf; 
         s.connect(audioContextRef.current.destination); 
         s.start();
+        currentSourceRef.current = s;
+        return;
+      } catch (e) {
+        console.error("Error playing Gemini audio data:", e);
       }
-    } catch (e) {
-      const utterance = new SpeechSynthesisUtterance(voiceText);
-      window.speechSynthesis.speak(utterance);
     }
+
+    // Fallback: Web Speech API (window.speechSynthesis)
+    const utterance = new SpeechSynthesisUtterance(voiceText);
+    utterance.pitch = petType === PetType.DOG ? 0.9 : 1.2;
+    utterance.rate = 1.0;
+    // Find a friendly voice if possible
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => v.name.includes('Google') || v.name.includes('Female') || v.lang === 'en-US');
+    if (preferredVoice) utterance.voice = preferredVoice;
+    
+    window.speechSynthesis.speak(utterance);
   };
 
   const startSimulation = (type: 'feed' | 'water') => {
@@ -92,20 +121,48 @@ const App: React.FC = () => {
     }, 1000);
   };
 
+  const handleAction = async (input: string, location?: string) => {
+    const res = await actionProcessor.process(input, 'ui', petType, stats, location);
+    if (res) {
+      setStatus(res.animation);
+      const structured = `[VOICE]: "${res.voiceText}"\n[VISUAL]: ${res.chatMessage}\n[TEXT]: ✨ Done!`;
+      setMessages(prev => [...prev, { id: Date.now().toString(), text: structured, sender: 'lumi', timestamp: Date.now() }]);
+      speak(structured);
+      
+      setStats(prev => ({
+        hunger: Math.min(100, Math.max(0, prev.hunger + (res.statUpdate.hunger || 0))),
+        thirst: Math.min(100, Math.max(0, prev.thirst + (res.statUpdate.thirst || 0))),
+        happiness: Math.min(100, Math.max(0, prev.happiness + (res.statUpdate.happiness || 0))),
+        energy: Math.min(100, Math.max(0, prev.energy + (res.statUpdate.energy || 0)))
+      }));
+
+      if (input === 'feed' || input === 'water') startSimulation(input as any);
+      else setTimeout(() => setStatus(PetStatus.IDLE), res.duration);
+      return true;
+    }
+    return false;
+  };
+
   const handleSendMessage = async (text: string) => {
+    if (!text.trim()) return;
+    
     setMessages(prev => [...prev, { id: Date.now().toString(), text, sender: 'user', timestamp: Date.now() }]);
     setIsThinking(true);
 
-    const lower = text.toLowerCase();
-    if (lower.includes('feed')) startSimulation('feed');
-    else if (lower.includes('water')) startSimulation('water');
+    const wasAction = await handleAction(text);
+    if (wasAction) {
+      setIsThinking(false);
+      return;
+    }
 
     try {
       const resp = await lumiService.sendMessage(text, petType);
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), text: resp, sender: 'lumi', timestamp: Date.now() }]);
       speak(resp);
     } catch (e) {
-      setMessages(prev => [...prev, { id: Date.now().toString(), text: "🐾 I'm here!", sender: 'lumi', timestamp: Date.now() }]);
+      const fallback = `[VOICE]: "I'm here!"\n[VISUAL]: Watches you\n[TEXT]: 🐾 I'm listening!`;
+      setMessages(prev => [...prev, { id: Date.now().toString(), text: fallback, sender: 'lumi', timestamp: Date.now() }]);
+      speak(fallback);
     } finally {
       setIsThinking(false);
     }
@@ -114,10 +171,7 @@ const App: React.FC = () => {
   const handleMoodSelect = (mood: Mood) => {
     setShowMoodPicker(false);
     setMoodHistory(prev => [...prev, { mood, timestamp: Date.now() }]);
-    const text = mood === Mood.SAD || mood === Mood.OVERWHELMED 
-      ? `I'm feeling ${mood}. I need some help.`
-      : `I'm feeling ${mood}.`;
-    handleSendMessage(text);
+    handleSendMessage(`I'm feeling ${mood}.`);
   };
 
   useEffect(() => {
@@ -149,13 +203,13 @@ const App: React.FC = () => {
             <StatBar label="Energy" value={stats.energy} color="bg-emerald-400" />
           </div>
           
-          <PetAvatar type={petType} status={status} onClick={() => handleSendMessage("pet")} />
+          <PetAvatar type={petType} status={status} onPet={(loc) => handleAction('pet', loc)} />
           
           <div className="flex flex-wrap justify-center gap-2 mt-6">
             <ActionButton icon={<Utensils size={18}/>} label="Feed" onClick={() => handleSendMessage("feed")} color="bg-orange-50 text-orange-600 ring-orange-100" />
             <ActionButton icon={<Droplets size={18}/>} label="Water" onClick={() => handleSendMessage("water")} color="bg-blue-50 text-blue-600 ring-blue-100" />
             <ActionButton icon={<Gamepad2 size={18}/>} label="Play" onClick={() => handleSendMessage("play fetch")} color="bg-purple-50 text-purple-600 ring-purple-100" />
-            <ActionButton icon={<Heart size={18}/>} label="Pet" onClick={() => handleSendMessage("pet")} color="bg-rose-50 text-rose-600 ring-rose-100" />
+            <ActionButton icon={<Heart size={18}/>} label="Pet" onClick={() => handleAction('pet')} color="bg-rose-50 text-rose-600 ring-rose-100" />
           </div>
         </div>
 
@@ -171,10 +225,6 @@ const App: React.FC = () => {
             simulationData={{ type: simulationType, step: simulationStep }}
           />
         </div>
-      </div>
-      
-      <div className="mb-2 text-[10px] font-black tracking-[0.4em] uppercase opacity-30 text-center">
-        {isNight ? "Night Cycle Active" : "PausePaws Full Experience"}
       </div>
     </div>
   );
