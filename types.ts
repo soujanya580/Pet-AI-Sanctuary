@@ -21,13 +21,13 @@ export enum PetStatus {
   EATING = 'eating',
   DRINKING = 'drinking',
   PLAYING = 'playing',
+  FETCHING = 'fetching',
   STRETCHING = 'stretching',
   PETTING = 'petting',
   BREATHING = 'breathing',
   SITTING = 'sitting',
-  HUMMING = 'humming',
-  SQUEEZING = 'squeezing',
-  GUIDING = 'guiding'
+  CONSOLING = 'consoling',
+  SLEEPING = 'sleeping'
 }
 
 export enum PetType {
